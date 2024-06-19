@@ -111,7 +111,7 @@ data "cloudinit_config" "minikube_cloud_init" {
   part {
     filename     = "init-aws-minikube.sh"
     content_type = "text/x-shellscript"
-    content      = templatefile("${path.module}/scripts/init-aws-minikube.sh", { kubeadm_token = module.kubeadm-token.token, dns_name = "${var.cluster_name}.${var.hosted_zone}", ip_address = aws_spot_instance_request.minikube.public_ip, cluster_name = var.cluster_name, kubernetes_version = var.kubernetes_version, addons = join(" ", var.addons) })
+    content      = templatefile("${path.module}/scripts/init-aws-minikube.sh", { kubeadm_token = module.kubeadm-token.token, dns_name = "${var.cluster_name}.${var.hosted_zone}", ip_address = aws_eip.minikube.public_ip, cluster_name = var.cluster_name, kubernetes_version = var.kubernetes_version, addons = join(" ", var.addons) })
   }
 }
 
@@ -148,13 +148,18 @@ data "aws_ami" "centos7" {
   }
 }
 
+resource "aws_eip" "minikube" {
+  vpc = true
+}
+
 resource "aws_spot_instance_request" "minikube" {
   # Instance type - any of the c4 should do for now
-  instance_type        = var.aws_instance_type
-  ami                  = length(var.ami_image_id) > 0 ? var.ami_image_id : data.aws_ami.centos7.id
-  key_name             = aws_key_pair.minikube_keypair.key_name
-  subnet_id            = var.aws_subnet_id
-  wait_for_fulfillment = true
+  instance_type               = var.aws_instance_type
+  ami                         = length(var.ami_image_id) > 0 ? var.ami_image_id : data.aws_ami.centos7.id
+  key_name                    = aws_key_pair.minikube_keypair.key_name
+  subnet_id                   = var.aws_subnet_id
+  wait_for_fulfillment        = true
+  associate_public_ip_address = false
 
   vpc_security_group_ids = [
     aws_security_group.minikube.id,
@@ -192,6 +197,11 @@ resource "aws_ec2_tag" "name_tag" {
   value       = var.cluster_name
 }
 
+resource "aws_eip_association" "minikube_assoc" {
+  instance_id = aws_instance.minikube.id
+  allocation_id = aws_eip.minikube.id
+}
+
 #####
 # DNS record
 #####
@@ -205,7 +215,7 @@ resource "aws_route53_record" "minikube" {
   zone_id = data.aws_route53_zone.dns_zone.zone_id
   name    = "${var.cluster_name}.${var.hosted_zone}"
   type    = "A"
-  records = [aws_spot_instance_request.minikube.public_ip]
+  records = [aws_eip.minikube.public_ip]
   ttl     = 300
 }
 
