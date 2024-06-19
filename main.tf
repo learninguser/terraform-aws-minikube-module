@@ -198,7 +198,7 @@ resource "aws_ec2_tag" "name_tag" {
 }
 
 resource "aws_eip_association" "minikube_assoc" {
-  instance_id = aws_instance.minikube.id
+  instance_id = aws_spot_instance_request.minikube.spot_instance_id
   allocation_id = aws_eip.minikube.id
 }
 
