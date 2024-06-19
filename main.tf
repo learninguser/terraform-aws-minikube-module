@@ -90,8 +90,8 @@ EOF
 }
 
 resource "aws_iam_policy_attachment" "minikube-attach" {
-  name = "minikube-attachment"
-  roles = [aws_iam_role.minikube_role.name]
+  name       = "minikube-attachment"
+  roles      = [aws_iam_role.minikube_role.name]
   policy_arn = aws_iam_policy.minikube_policy.arn
 }
 
@@ -105,13 +105,13 @@ resource "aws_iam_instance_profile" "minikube_profile" {
 ##########
 
 data "cloudinit_config" "minikube_cloud_init" {
-  gzip = true
+  gzip          = true
   base64_encode = true
 
   part {
-    filename = "init-aws-minikube.sh"
+    filename     = "init-aws-minikube.sh"
     content_type = "text/x-shellscript"
-    content = templatefile("${path.module}/scripts/init-aws-minikube.sh", { kubeadm_token = module.kubeadm-token.token, dns_name = "${var.cluster_name}.${var.hosted_zone}", ip_address = aws_eip.minikube.public_ip, cluster_name = var.cluster_name, kubernetes_version = var.kubernetes_version, addons = join(" ", var.addons) } )
+    content      = templatefile("${path.module}/scripts/init-aws-minikube.sh", { kubeadm_token = module.kubeadm-token.token, dns_name = "${var.cluster_name}.${var.hosted_zone}", ip_address = aws_eip.minikube.public_ip, cluster_name = var.cluster_name, kubernetes_version = var.kubernetes_version, addons = join(" ", var.addons) })
   }
 }
 
@@ -120,7 +120,7 @@ data "cloudinit_config" "minikube_cloud_init" {
 ##########
 
 resource "aws_key_pair" "minikube_keypair" {
-  key_name = var.cluster_name
+  key_name   = var.cluster_name
   public_key = file(var.ssh_public_key)
 }
 
@@ -130,59 +130,50 @@ resource "aws_key_pair" "minikube_keypair" {
 
 data "aws_ami" "centos7" {
   most_recent = true
-  owners = ["aws-marketplace"]
+  owners      = ["aws-marketplace"]
 
   filter {
-    name = "product-code"
+    name   = "product-code"
     values = ["aw0evgkw8e5c1q413zgy5pjce", "cvugziknvmxgqna9noibqnnsy"]
   }
 
   filter {
-    name = "architecture"
+    name   = "architecture"
     values = ["x86_64"]
   }
 
   filter {
-    name = "virtualization-type"
+    name   = "virtualization-type"
     values = ["hvm"]
   }
 }
 
-resource "aws_eip" "minikube" {
-  vpc = true
-}
-
-resource "aws_instance" "minikube" {
+resource "aws_spot_instance_request" "minikube" {
   # Instance type - any of the c4 should do for now
-  instance_type = var.aws_instance_type
-
-  ami = length(var.ami_image_id) > 0 ? var.ami_image_id : data.aws_ami.centos7.id
-
-  key_name = aws_key_pair.minikube_keypair.key_name
-
-  subnet_id = var.aws_subnet_id
-
-  associate_public_ip_address = false
+  instance_type        = var.aws_instance_type
+  ami                  = length(var.ami_image_id) > 0 ? var.ami_image_id : data.aws_ami.centos7.id
+  key_name             = aws_key_pair.minikube_keypair.key_name
+  subnet_id            = var.aws_subnet_id
+  wait_for_fulfillment = true
 
   vpc_security_group_ids = [
     aws_security_group.minikube.id,
   ]
 
   iam_instance_profile = aws_iam_instance_profile.minikube_profile.name
-
-  user_data = data.cloudinit_config.minikube_cloud_init.rendered
+  user_data            = data.cloudinit_config.minikube_cloud_init.rendered
 
   tags = merge(
     {
-      "Name" = var.cluster_name
+      "Name"                                               = var.cluster_name
       format("kubernetes.io/cluster/%v", var.cluster_name) = "owned"
     },
     var.tags,
   )
 
   root_block_device {
-    volume_type = "gp2"
-    volume_size = "50"
+    volume_type           = "gp2"
+    volume_size           = "50"
     delete_on_termination = true
   }
 
@@ -195,9 +186,10 @@ resource "aws_instance" "minikube" {
   }
 }
 
-resource "aws_eip_association" "minikube_assoc" {
-  instance_id = aws_instance.minikube.id
-  allocation_id = aws_eip.minikube.id
+resource "aws_ec2_tag" "name_tag" {
+  resource_id = aws_spot_instance_request.minikube.spot_instance_id
+  key         = "Name"
+  value       = var.cluster_name
 }
 
 #####
@@ -205,15 +197,15 @@ resource "aws_eip_association" "minikube_assoc" {
 #####
 
 data "aws_route53_zone" "dns_zone" {
-  name = "${var.hosted_zone}."
+  name         = "${var.hosted_zone}."
   private_zone = var.hosted_zone_private
 }
 
 resource "aws_route53_record" "minikube" {
   zone_id = data.aws_route53_zone.dns_zone.zone_id
-  name = "${var.cluster_name}.${var.hosted_zone}"
-  type = "A"
-  records = [aws_eip.minikube.public_ip]
-  ttl = 300
+  name    = "${var.cluster_name}.${var.hosted_zone}"
+  type    = "A"
+  records = [aws_instance.minikube.public_ip]
+  ttl     = 300
 }
 
